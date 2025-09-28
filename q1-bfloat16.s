@@ -11,8 +11,8 @@
 .equ    BF16_ZERO,     0x0000
 .equ    BF16_NEG_ZERO, 0x8000
 
-.equ    NUM_TEST_VALUES_CONV,  9
-.equ    NUM_TEST_VALUES_ARITH, 11
+.equ    NUM_TEST_VALUES_CONV, 9
+.equ    NUM_TEST_VALUES_ADD,  11
 
 orig_f32:
 .word   0x00000000  #  0.0
@@ -260,64 +260,195 @@ test_arithmetic:
     addi    sp, sp, -4
     sw      ra, 0(sp)                     # store return addr
 
-# for (i = 0; i < NUM_TEST_VALUES; i++)
-    li      s0, 0                         # i = 0
+    # Test bf16_add
+    la      a0, bf16_add
+    la      a1, bf16_add_input
+    la      a2, bf16_add_output
+    li      a3, 2                         # two arguments
+    li      a4, NUM_TEST_VALUES_ADD
+    jal     ra, textfixture
+    bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
-    la      s1, bf16_add_input            # arr_ptr = &bf16_add_input[0]
-    la      s2, bf16_add_output           # arr_ptr = &bf16_add_output[0]
-    li      t0, NUM_TEST_VALUES_ARITH
-    bge     s0, t0, 2f                    # if (i >= NUM_TEST_VALUES) go to end for
-1:
-    lw      a0, 0(s1)                     # a0 = bf16_add_input[i*2]
-    lw      a1, 4(s1)                     # a1 = bf16_add_input[i*2 + 1]
-    jal     ra, bf16_add
-    mv      s3, a0                        # s3 = bf16_add(a, b)
-
-    lw      s4, 0(s2)                     # s4 = bf16_add_output[i]
-
-# Print bf16_add(a, b) and golden for debugging
-    # li      a7, 4
-    # la      a0, result_msg
-    # ecall                                 # Print string
-    # mv      a0, s3
-    # jal     ra, bf16_to_f32
-    # li      a7, 2
-    # ecall                                 # Print bf16_add(a, b)
-    # li      a7, 4
-    # la      a0, endline
-    # ecall                                 # Print newline
-    # la      a0, golden_msg
-    # ecall                                 # Print string
-    # li      a7, 2
-    # mv      a0, s4
-    # jal     ra, bf16_to_f32
-    # ecall                                 # Print golden
-    # li      a7, 4
-    # la      a0, endline
-    # ecall                                 # Print newline
-    # ecall
-
-    bne     s3, s4, 3f                    # if (s3 != expected) go to failed
-
-    addi    s0, s0, 1                     # i++
-    addi    s1, s1, 8                     # arr_ptr += 8
-    addi    s2, s2, 4                     # arr_ptr += 4
-
-    li      t0, NUM_TEST_VALUES_ARITH
-    blt     s0, t0, 1b                    # if (i < NUM_TEST_VALUES), back to 1
-2: # end for
-
+    # All tests passed
     li      a7, 4
     la      a0, arithmetic_passed_msg
     ecall                                 # Print passed message
 
     li      a0, 0
     j       4f                            # go to return
-3: # failed
+3: # fail
     li      a0, 1                         # a0 = 1
 4: # on return
     lw      ra, 0(sp)                     # restore return addr
     addi    sp, sp, 4
+    ret
+
+
+#-------------------------------------------------------------------------------
+# textfixture
+# Test the given function with the provided input and golden data
+#
+# Arguments:
+#   a0: address of the function to test
+#   a1: address of input data
+#   a2: address of golden data
+#   a3: number of arguments of the test function (1 or 2)
+#   a4: number of test data
+#
+# Returns:
+#   a0: 0 if all tests passed, 1 if any test failed
+#
+# Register Usage:
+#   s0: i
+#   s1: func_addr
+#   s2: input_data_addr
+#   s3: golden_data_addr
+#   s4: num_args
+#   s5: num_test_data
+#   s6: func(a0) or func(a0, a1)
+#   s7: golden_data[i]
+#
+#-------------------------------------------------------------------------------
+textfixture:
+    # Callee save
+    addi    sp, sp, -36
+    sw      ra, 32(sp)
+    sw      s0, 28(sp)
+    sw      s1, 24(sp)
+    sw      s2, 20(sp)
+    sw      s3, 16(sp)
+    sw      s4, 12(sp)
+    sw      s5, 8(sp)
+    sw      s6, 4(sp)
+    sw      s7, 0(sp)
+
+    li      s0, 0                         # i = 0
+    mv      s1, a0                        # func_addr
+    mv      s2, a1                        # input_data_addr
+    mv      s3, a2                        # golden_data_addr
+    mv      s4, a3                        # num_args
+    mv      s5, a4                        # num_test_data
+
+    bge     s0, s5, 5f                    # if (i >= num_test_data) go to pass
+
+    # Determine the number of arguments to load
+    li      t0, 1
+    sub     t1, s4, t0                    # t1 = num args - 1
+    beqz    t1, 2f                        # if (num args - 1 == 0) go to one_arg
+
+1: # two_args
+    lw      a0, 0(s2)                     # a0 = input_data[i*2]
+    lw      a1, 4(s2)                     # a1 = input_data[i*2 + 1]
+    jalr    ra, s1, 0                     # func(a0, a1)
+
+    mv      s6, a0                        # s6 = result
+    lw      s7, 0(s3)                     # s7 = golden_data[i]
+
+    # Print for debugging
+    mv      a0, s6
+    mv      a1, s7
+    jal     ra, print
+
+    bne     s6, s7, 4f                    # compare s6, s7
+
+
+    addi    s0, s0, 1                     # i++
+    addi    s2, s2, 8                     # input_data += 8
+    addi    s3, s3, 4                     # golden_data += 4
+    blt     s0, s5, 1b                    # if (i < num_test_data) go to two_args
+    j       3f
+
+2: # one_arg
+    lw      a0, 0(s2)                     # a0 = input_data[i]
+    jalr    ra, s1, 0                     # test_function(a0)
+
+    mv      s6, a0                        # s6 = result
+    lw      s7, 0(s3)                     # s7 = golden_data[i]
+
+    # Print for debugging
+    mv      a0, s6
+    mv      a1, s7
+    jal     ra, print
+
+    bne     s6, s7, 4f                    # compare s6, s7
+
+    addi    s0, s0, 1                     # i++
+    addi    s2, s2, 4                     # input_data += 4
+    addi    s3, s3, 4                     # golden_data += 4
+    blt     s0, s5, 2b                    # if (i < num_test_data) go to one_arg
+
+3: # pass
+    li      a0, 0                         # return 0
+    j       5f
+
+4: # fail
+    li      a0, 1                         # return 1
+
+5: # on return
+
+    # Callee restore
+    lw      s7, 0(sp)
+    lw      s6, 4(sp)
+    lw      s5, 8(sp)
+    lw      s4, 12(sp)
+    lw      s3, 16(sp)
+    lw      s2, 20(sp)
+    lw      s1, 24(sp)
+    lw      s0, 28(sp)
+    lw      ra, 32(sp)
+    addi    sp, sp, 36
+
+    ret
+
+
+#-------------------------------------------------------------------------------
+# print
+# Print 2 bfloat16 numbers (result and golden) for debugging
+#
+# Arguments:
+#   a0: bf16 a (result)
+#   a1: bf16 b (golden)
+#
+# Register Usage:
+#   s0: a
+#   s1: b
+#
+#-------------------------------------------------------------------------------
+print:
+    addi    sp, sp, -12
+    sw      ra, 8(sp)
+    sw      s0, 4(sp)
+    sw      s1, 0(sp)
+
+    mv      s0, a0
+    mv      s1, a1
+
+    li      a7, 4                         # print string
+    la      a0, result_msg
+    ecall
+
+    li      a7, 2                         # print float
+    mv      a0, s0
+    jal     ra, bf16_to_f32
+    ecall
+
+    li      a7, 4                         # print string
+    la      a0, golden_msg
+    ecall
+
+    li      a7, 2                         # print float
+    mv      a0, s1
+    jal     ra, bf16_to_f32
+    ecall
+
+    li      a7, 4                         # print newline
+    la      a0, endline
+    ecall
+
+    lw      s1, 0(sp)
+    lw      s0, 4(sp)
+    lw      ra, 8(sp)
+    addi    sp, sp, 12
     ret
 
 
