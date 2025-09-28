@@ -13,6 +13,7 @@
 
 .equ    NUM_TEST_VALUES_CONV, 9
 .equ    NUM_TEST_VALUES_ADD,  11
+.equ    NUM_TEST_VALUES_SUB,  3
 
 orig_f32:
 .word   0x00000000  #  0.0
@@ -73,12 +74,23 @@ bf16_add_output:
 .word   0xffff80            # -Inf
 .word   0x7f80              # +Inf
 
-result_msg:                .string " Result "
-golden_msg:                .string " Golden "
+bf16_sub_input:
+.word   0x4000, 0x3f80      #  2.0 - 1.0
+.word   0x4049, 0x402e      #  3.140625 - 2.71875
+.word   0x3f80, 0xffffc000  #  1.0 - -2.0
+
+bf16_sub_output:
+.word  0x3f80              #  1.0
+.word  0x3ed8              #  0.421875
+.word  0x4040              #  3.0
+
 conversion_passed_msg:     .string " Basic conversions: Pass\n"
 special_values_passed_msg: .string " Special values: PASS\n"
 arithmetic_passed_msg:     .string " Arithmetic (ADD): PASS\n"
-endline:                   .string "\n"
+
+result_msg: .string "   Result: "
+golden_msg: .string " Golden: "
+endline:    .string "\n"
 
 .text
 
@@ -266,6 +278,15 @@ test_arithmetic:
     la      a2, bf16_add_output
     li      a3, 2                         # two arguments
     li      a4, NUM_TEST_VALUES_ADD
+    jal     ra, textfixture
+    bne     x0, a0, 3f                    # if (ret != 0) go to fail
+
+    # Test bf16_sub
+    la      a0, bf16_sub
+    la      a1, bf16_sub_input
+    la      a2, bf16_sub_output
+    li      a3, 2                         # two arguments
+    li      a4, NUM_TEST_VALUES_SUB
     jal     ra, textfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
@@ -773,7 +794,28 @@ on_return_add_bf16:
     ret
 
 
+#-------------------------------------------------------------------------------
+# bf16_sub
+# Subtract two bfloat16 numbers
+#
+# Arguments:
+#   a0: a
+#   a1: b
+#
+# Returns:
+#   a0: a - b
+#
+#-------------------------------------------------------------------------------
 bf16_sub:
+    addi    sp, sp, -4
+    sw      ra, 0(sp)                     # store return addr
+
+    li      t0, BF16_SIGN_MASK
+    xor     a1, a1, t0                    # b = -b
+    jal     ra, bf16_add
+
+    lw      ra, 0(sp)                     # restore return addr
+    addi    sp, sp, 4
     ret
 
 
