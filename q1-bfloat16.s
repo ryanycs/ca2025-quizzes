@@ -86,7 +86,8 @@ bf16_sub_output:
 
 conversion_passed_msg:     .string " Basic conversions: Pass\n"
 special_values_passed_msg: .string " Special values: PASS\n"
-arithmetic_passed_msg:     .string " Arithmetic (ADD): PASS\n"
+arithmetic_passed_msg:     .string " Arithmetic (ADD/SUB): PASS\n"
+comparison_passed_msg:     .string " Comparisons: PASS\n"
 
 result_msg: .string "   Result: "
 golden_msg: .string " Golden: "
@@ -98,23 +99,25 @@ endline:    .string "\n"
 # main
 #-------------------------------------------------------------------------------
 main:
-    li      s0, 0                         # failed = 0
-
-# test_basic_conversions()
+    # test_basic_conversions()
     jal     ra, test_basic_conversions
-    bne     x0, a0, 1f                    # if (ret != 0) go to failed
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
-# test_special_values()
+    # test_special_values()
     jal     ra, test_special_values
-    bne     x0, a0, 1f                    # if (ret != 0) go to failed
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
-# test_arithmetic()
+    # test_arithmetic()
     jal     ra, test_arithmetic
-    bne     x0, a0, 1f                    # if (ret != 0) go to failed
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
+
+    # test_comparisons()
+    jal     ra, test_comparisons
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
     li      a7, 10                        # system call: exit
     ecall
-1: # failed
+1: # fail
     li      a7, 93                        # system call: exit2
     li      a0, 1                         # exit value
     ecall                                 # exit 1
@@ -161,16 +164,16 @@ test_basic_conversions:
     beq     t0, x0, 2f                    # if (orig == 0.0) go to 2
     slt     t1, s2, x0                    # t1 = orig < 0
     slt     t2, s4, x0                    # t2 = conv < 0
-    bne     t1, t2, 4f                    # if (orig < 0) != (conv < 0) go to failed
+    bne     t1, t2, 4f                    # if (orig < 0) != (conv < 0) go to fail
 2:
 
 # bf vs conv_bf16 check
     lw      t0, 0(s5)                     # t0 = conv_bf16[i]
-    bne     s3, t0, 4f                    # if (bf != conv_bf16[i]) go to failed
+    bne     s3, t0, 4f                    # if (bf != conv_bf16[i]) go to fail
 
 # conv vs conv_f32 check
     lw      t0, 0(s6)                     # t0 = conv_f32[i]
-    bne     s4, t0, 4f                    # if (conv != conv_f32[i]) go to failed
+    bne     s4, t0, 4f                    # if (conv != conv_f32[i]) go to fail
 
 # Print orig and conv for debugging
     # li      a7, 4                         # print string
@@ -207,7 +210,7 @@ test_basic_conversions:
 
     mv      a0, x0                        # a0 = 0
     j       5f                            # go to return
-4: # failed
+4: # fail
     li      a0, 1                         # a0 = 1
 5: # on return
     lw      s0, 0(sp)                     # restore s0
@@ -225,31 +228,31 @@ test_special_values:
 
     li      a0, BF16_POS_INF
     jal     ra, bf16_isinf
-    beq     x0, a0, 1f                    # if (ret == 0) go to failed
+    beq     x0, a0, 1f                    # if (ret == 0) go to fail
 
     li      a0, BF16_POS_INF
     jal     ra, bf16_isnan
-    bne     x0, a0, 1f                    # if (ret != 0) go to failed
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
     li      a0, BF16_NEG_INF
     jal     ra, bf16_isinf
-    beq     x0, a0, 1f                    # if (ret == 0) go to failed
+    beq     x0, a0, 1f                    # if (ret == 0) go to fail
 
     li      a0, BF16_NAN
     jal     ra, bf16_isnan
-    beq     x0, a0, 1f                    # if (ret == 0) go to failed
+    beq     x0, a0, 1f                    # if (ret == 0) go to fail
 
     li      a0, BF16_NAN
     jal     ra, bf16_isinf
-    bne     x0, a0, 1f                    # if (ret != 0) go to failed
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
     li      a0, BF16_ZERO
     jal     ra, bf16_iszero
-    beq     x0, a0, 1f                    # if (ret == 0) go to failed
+    beq     x0, a0, 1f                    # if (ret == 0) go to fail
 
     li      a0, BF16_NEG_ZERO
     jal     ra, bf16_iszero
-    beq     x0, a0, 1f                    # if (ret == 0) go to failed
+    beq     x0, a0, 1f                    # if (ret == 0) go to fail
 
     li      a7, 4
     la      a0, special_values_passed_msg
@@ -257,7 +260,7 @@ test_special_values:
 
     li      a0, 0
     j       2f                            # go to return
-1: # failed
+1: # fail
     li      a0, 1
 2: # on return
     lw      ra, 0(sp)                     # restore return addr
@@ -302,6 +305,101 @@ test_arithmetic:
 4: # on return
     lw      ra, 0(sp)                     # restore return addr
     addi    sp, sp, 4
+    ret
+
+
+#-------------------------------------------------------------------------------
+# test_comparisons
+#
+# Register Usage:
+#   s0: a
+#   s1: b
+#   s2: c
+#
+#-------------------------------------------------------------------------------
+test_comparisons:
+    # Callee save
+    addi    sp, sp, -16
+    sw      ra, 12(sp)
+    sw      s0, 8(sp)
+    sw      s1, 4(sp)
+    sw      s2, 0(sp)
+
+    li      s0, 0x3f80                    # a = 1.0
+    li      s1, 0x4000                    # b = 2.0
+    li      s2, 0x3f80                    # c = 1.0
+
+    # Test bf16_eq
+    mv      a0, s0                        # a0 = a
+    mv      a1, s2                        # a1 = c
+    jal     ra, bf16_eq                   # bf16_eq(a, c)
+    beq     x0, a0, 1f                    # if (a != c) go to fail
+
+    mv      a0, s0                        # a0 = a
+    mv      a1, s1                        # a1 = b
+    jal     ra, bf16_eq                   # bf16_eq(a, b)
+    bne     x0, a0, 1f                    # if (a == b) go to fail
+
+    # Test bf16_lt
+    mv      a0, s0                        # a0 = a
+    mv      a1, s1                        # a1 = b
+    jal     ra, bf16_lt                   # bf16_lt(a, b)
+    beq     x0, a0, 1f                    # if (!(a < b)) go to fail
+
+    mv      a0, s1                        # a0 = b
+    mv      a1, s0                        # a1 = a
+    jal     ra, bf16_lt                   # bf16_lt(b, a)
+    bne     x0, a0, 1f                    # if (b < a) go to fail
+
+    mv      a0, s0                        # a0 = a
+    mv      a1, s2                        # a1 = c
+    jal     ra, bf16_lt                   # bf16_lt(a, c)
+    bne     x0, a0, 1f                    # if (a < c) go to fail
+
+    # Test bf16_gt
+    mv      a0, s1                        # a0 = b
+    mv      a1, s0                        # a1 = a
+    jal     ra, bf16_gt                   # bf16_gt(b, a)
+    beq     x0, a0, 1f                    # if (!(b > a)) go to fail
+
+    mv      a0, s0                        # a0 = a
+    mv      a1, s1                        # a1 = b
+    jal     ra, bf16_gt                   # bf16_gt(a, b)
+    bne     x0, a0, 1f                    # if (a > b) go to fail
+
+    # Test NaN
+    li      s1, BF16_NAN                  # s1 = NaN
+    mv      a0, s1                        # a0 = NaN
+    mv      a1, s1                        # a1 = NaN
+    jal     ra, bf16_eq                   # bf16_eq(NaN, NaN)
+    bne     x0, a0, 1f                    # if (NaN == NaN) go to fail
+
+    mv      a0, s1                        # a0 = NaN
+    mv      a1, s0                        # a1 = a
+    jal     ra, bf16_lt                   # bf16_lt(NaN, a)
+    bne     x0, a0, 1f                    # if (NaN < a) go to fail
+
+    mv      a0, s1                        # a0 = NaN
+    mv      a1, s0                        # a1 = a
+    jal     ra, bf16_gt                   # bf16_gt(NaN, a)
+    bne     x0, a0, 1f                    # if (NaN > a) go to fail
+
+    # Print passed message
+    li      a7, 4
+    la      a0, comparison_passed_msg
+    ecall
+    j       2f
+
+1: # fail
+    li      a0, 1
+
+2: # on return
+    # Callee restore
+    lw      s2, 0(sp)
+    lw      s1, 4(sp)
+    lw      s0, 8(sp)
+    lw      ra, 12(sp)
+    addi    sp, sp, 16
     ret
 
 
@@ -366,9 +464,9 @@ textfixture:
     lw      s7, 0(s3)                     # s7 = golden_data[i]
 
     # Print for debugging
-    mv      a0, s6
-    mv      a1, s7
-    jal     ra, print
+    # mv      a0, s6
+    # mv      a1, s7
+    # jal     ra, print
 
     bne     s6, s7, 4f                    # compare s6, s7
 
@@ -387,9 +485,9 @@ textfixture:
     lw      s7, 0(s3)                     # s7 = golden_data[i]
 
     # Print for debugging
-    mv      a0, s6
-    mv      a1, s7
-    jal     ra, print
+    # mv      a0, s6
+    # mv      a1, s7
+    # jal     ra, print
 
     bne     s6, s7, 4f                    # compare s6, s7
 
@@ -828,4 +926,178 @@ bf16_div:
 
 
 bf16_sqrt:
+    ret
+
+
+#-------------------------------------------------------------------------------
+# bf16_eq
+#
+# Arguments:
+#   a0: a
+#   a1: b
+#
+# Returns:
+#   a0: 1 if a == b, 0 otherwise
+#
+# Register Usage:
+#   s0: a
+#   s1: b
+#
+#-------------------------------------------------------------------------------
+bf16_eq:
+    # Callee save
+    addi    sp, sp, -12
+    sw      ra, 8(sp)
+    sw      s0, 4(sp)
+    sw      s1, 0(sp)
+
+    mv      s0, a0                        # s0 = a
+    mv      s1, a1                        # s1 = b
+
+    # Check for NaN
+    jal     ra, bf16_isnan                # bf16_isnan(a)
+    bne     x0, a0, 2f                    # if (a == NaN) return false
+    mv      a0, s1                        # a0 = b
+    jal     ra, bf16_isnan                # bf16_isnan(b)
+    bne     x0, a0, 2f                    # if (b == NaN) return false
+
+    # Check for zero
+    mv      a0, s0                        # a0 = a
+    jal     ra, bf16_iszero               # bf16_iszero(a)
+    mv      t0, a0                        # t0 = (a == 0)
+    mv      a0, s1                        # a0 = b
+    jal     ra, bf16_iszero               # bf16_iszero(b)
+    and     t0, t0, a0                    # t0 = (a == 0 && b == 0)
+    bne     x0, t0, 1f                    # if (a == 0 && b == 0) return true
+
+    # Compare values
+    sub     t0, s0, s1                    # t0 = a - b
+    bne     x0, t0, 2f                    # if (a != b) return false
+
+1: # return true
+    li      a0, 1
+    j       3f
+
+2: # return false
+    li      a0, 0
+
+3: # on return
+    # Callee restore
+    lw      s1, 0(sp)
+    lw      s0, 4(sp)
+    lw      ra, 8(sp)
+    addi    sp, sp, 12
+    ret
+
+
+#-------------------------------------------------------------------------------
+# bf16_lt
+#
+# Arguments:
+#   a0: a
+#   a1: b
+#
+# Returns:
+#   a0: 1 if a < b, 0 otherwise
+#
+# Register Usage:
+#   s0: a
+#   s1: b
+#
+#-------------------------------------------------------------------------------
+bf16_lt:
+    # Callee save
+    addi    sp, sp, -20
+    sw      ra, 16(sp)
+    sw      s0, 12(sp)
+    sw      s1, 8(sp)
+    sw      s2, 4(sp)
+    sw      s3, 0(sp)
+
+    mv      s0, a0                        # s0 = a
+    mv      s1, a1                        # s1 = b
+
+    # Check for NaN
+    jal     ra, bf16_isnan                # bf16_isnan(a)
+    bne     x0, a0, 4f                    # if (a == NaN) return false
+    mv      a0, s1                        # a0 = b
+    jal     ra, bf16_isnan                # bf16_isnan(b)
+    bne     x0, a0, 4f                    # if (b == NaN) return false
+
+    # Check for zero
+    mv      a0, s0                        # a0 = a
+    jal     ra, bf16_iszero               # bf16_iszero(a)
+    mv      t0, a0                        # t0 = (a == 0)
+    mv      a0, s1                        # a0 = b
+    jal     ra, bf16_iszero               # bf16_iszero(b)
+    and     t0, t0, a0                    # t0 = (a == 0 && b == 0)
+    bne     x0, t0, 4f                    # if (a == 0 && b == 0) return false
+
+    # sign_a
+    srli    s2, s0, 15                    # sign_a = a >> 15
+    andi    s2, s2, 1                     # sign_a = (a >> 15) & 1
+
+    # sign_b
+    srli    s3, s1, 15                    # sign_b = b >> 15
+    andi    s3, s3, 1                     # sign_b = (b >> 15) & 1
+
+    # Check for sign_a != sign_b
+    bne     s2, s3, 1f                    # if (sign_a != sign_b) go to 1
+
+    bnez    s2, 1f                        # if (sign_a) return a > b
+    sltu    t0, s0, s1                    # t0 = (a < b) ? 1 : 0
+    bnez    t0, 3f
+    j       4f                            # return false
+
+1: # return a > b
+    sltu    t0, s1, s0                    # t0 = (b < a) ? 1 : 0
+    bnez    t0, 3f                        # if (b < a) return true
+    j       4f                            # else return false
+
+2: # sign_a != sign_b
+    sub     t0, s2, s3                    # t0 = sign_a - sign_b
+    blt     x0, t0, 4f                    # if (sign_a == 0 && sign_b == 1) return false
+
+3: # return true
+    li      a0, 1
+    j       5f                            # go to on return
+
+4: # return false
+    li      a0, 0
+
+5: # on return
+    lw      s3, 0(sp)
+    lw      s2, 4(sp)
+    lw      s1, 8(sp)
+    lw      s0, 12(sp)
+    lw      ra, 16(sp)
+    addi    sp, sp, 20
+    ret
+
+
+#-------------------------------------------------------------------------------
+# bf16_gt
+#
+# Arguments:
+#   a0: a
+#   a1: b
+#
+# Returns:
+#   a0: 1 if a > b, 0 otherwise
+#
+#-------------------------------------------------------------------------------
+bf16_gt:
+    # Callee save
+    addi    sp, sp, -4
+    sw      ra, 0(sp)
+
+    # Swap a and b and call bf16_lt
+    mv      t0, a0                        # t0 = a
+    mv      a0, a1                        # a0 = b
+    mv      a1, t0                        # a1 = t0
+    jal     ra, bf16_lt                   # bf16_lt(b, a)
+
+    # Callee restore
+    lw      ra, 0(sp)
+    addi    sp, sp, 4
     ret
