@@ -14,6 +14,7 @@
 .equ    NUM_TEST_VALUES_CONV, 9
 .equ    NUM_TEST_VALUES_ADD,  11
 .equ    NUM_TEST_VALUES_SUB,  3
+.equ    NUM_TEST_VALUES_MUL,  4
 
 orig_f32:
 .word   0x00000000  #  0.0
@@ -80,13 +81,25 @@ bf16_sub_input:
 .word   0x3f80, 0xffffc000  #  1.0 - -2.0
 
 bf16_sub_output:
-.word  0x3f80              #  1.0
-.word  0x3ed8              #  0.421875
-.word  0x4040              #  3.0
+.word   0x3f80              #  1.0
+.word   0x3ed8              #  0.421875
+.word   0x4040              #  3.0
+
+bf16_mul_input:
+.word   0x4040, 0x4080      #  3.0 * 4.0
+.word   0x4049, 0x402e      #  3.140625 * 2.71875
+.word   0x7f80, 0x3f80      # +Inf * 1.0
+.word   0x7f80, 0x0000      # +Inf * 0.0
+
+bf16_mul_output:
+.word   0x4140              #  12.0
+.word   0x4108              #  8.5
+.word   0x7f80              # +Inf
+.word   0x7fc0              #  NaN
 
 conversion_passed_msg:     .string " Basic conversions: Pass\n"
 special_values_passed_msg: .string " Special values: PASS\n"
-arithmetic_passed_msg:     .string " Arithmetic (ADD/SUB): PASS\n"
+arithmetic_passed_msg:     .string " Arithmetic (ADD/SUB/MUL): PASS\n"
 comparison_passed_msg:     .string " Comparisons: PASS\n"
 
 result_msg: .string "   Result: "
@@ -293,6 +306,15 @@ test_arithmetic:
     jal     ra, textfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
+    # Test bf16_mul
+    la      a0, bf16_mul
+    la      a1, bf16_mul_input
+    la      a2, bf16_mul_output
+    li      a3, 2                         # two arguments
+    li      a4, NUM_TEST_VALUES_MUL
+    jal     ra, textfixture
+    bne     x0, a0, 3f                    # if (ret != 0) go to fail
+
     # All tests passed
     li      a7, 4
     la      a0, arithmetic_passed_msg
@@ -388,6 +410,8 @@ test_comparisons:
     li      a7, 4
     la      a0, comparison_passed_msg
     ecall
+
+    li      a0, 0
     j       2f
 
 1: # fail
@@ -568,6 +592,41 @@ print:
     lw      s0, 4(sp)
     lw      ra, 8(sp)
     addi    sp, sp, 12
+    ret
+
+
+#-------------------------------------------------------------------------------
+# mul
+# Multiplies two word by shift-and-add algorithm.
+#
+# Arguments:
+#   a0 = multiplicand
+#   a1 = multiplier
+#
+# Returns:
+#   a0 = a0 * a1
+#
+# Side effects:
+#   None
+#
+#-------------------------------------------------------------------------------
+mul:
+    addi    sp, sp, -4
+    sw      ra, 0(sp)
+
+    li      t0, 0
+1:
+    andi    t1, a1, 1                     # Check LSB of multiplier
+    beq     t1, x0, 8                     # If LSB is 0, skip add(next instruction)
+    add     t0, t0, a0
+    slli    a0, a0, 1                     # multiplicand <<= 1
+    srli    a1, a1, 1                     # multiplier >>= 1
+    bnez    a1, 1b                        # Repeat if multiplier != 0
+
+    mv      a0, t0
+
+    lw      ra, 0(sp)
+    addi    sp, sp, 4
     ret
 
 
@@ -917,7 +976,217 @@ bf16_sub:
     ret
 
 
+#-------------------------------------------------------------------------------
+# bf16_mul
+# Multiply two bfloat16 numbers
+#
+# Arguments:
+#   a0: a
+#   a1: b
+#
+# Returns:
+#   a0: a * b
+#
+# Register Usage:
+#   s0: sign_a
+#   s1: sign_b
+#   s2: exp_a (signed int)
+#   s3: exp_b (signed int)
+#   s4: mant_a
+#   s5: mant_b
+#   s6: result_sign
+#   s7: exp_adjust (signed int)
+#   s8: result_mant
+#   s9: result_exp (signed int)
+#
+#-------------------------------------------------------------------------------
 bf16_mul:
+    # Callee save
+    addi    sp, sp, -44
+    sw      ra, 40(sp)
+    sw      s0, 36(sp)
+    sw      s1, 32(sp)
+    sw      s2, 28(sp)
+    sw      s3, 24(sp)
+    sw      s4, 20(sp)
+    sw      s5, 16(sp)
+    sw      s6, 12(sp)
+    sw      s7, 8(sp)
+    sw      s8, 4(sp)
+    sw      s9, 0(sp)
+
+    # sign_a
+    srli    s0, a0, 15                    # sign_a = a >> 15
+    andi    s0, s0, 1                     # sign_a &= 1
+
+    # sign_b
+    srli    s1, a1, 15                    # sign_b = b >> 15
+    andi    s1, s1, 1                     # sign_b &= 1
+
+    # exp_a
+    srli    s2, a0, 7                     # exp_a = a >> 7
+    andi    s2, s2, 0xFF                  # exp_a &= 0xFF
+
+    # exp_b
+    srli    s3, a1, 7                     # exp_b = b >> 7
+    andi    s3, s3, 0xFF                  # exp_b &= 0xFF
+
+    # mant_a
+    andi    s4, a0, 0x7F                  # mant_a = a & 0x7F
+
+    # mant_b
+    andi    s5, a1, 0x7F                  # mant_b = b & 0x7F
+
+    # result_sign
+    xor     s6, s0, s1                    # result_sign = sign_a ^ sign_b
+
+    # Check for NaN or Inf
+    li      t0, 0xFF                      # t0 = 0xFF
+    bne     s2, t0, 2f                    # if (exp_a != 0xFF) skip to 2
+    bnez    s4, return_a_bf16_mul         # if (mant_a) return a (= NaN)
+    bnez    s3, 1f
+    bnez    s5, 1f
+    j       return_nan_bf16_mul           # if (!exp_b && !mant_b) return NaN
+1:
+    j       return_inf_bf16_mul           # else return Inf
+
+
+2:
+    bne     s3, t0, 2f                    # if (exp_b != 0xFF) skip to 2
+    bnez    s5, return_b_bf16_mul
+    bnez    s2, 1f
+    bnez    s4, 1f
+    j       return_nan_bf16_mul           # if (!exp_a && !mant_a) return NaN
+1:
+    j       return_inf_bf16_mul           # else return Inf
+
+2:
+    # Check for zero
+    seqz    t0, s2                        # t0 = !exp_a
+    seqz    t1, s3                        # t1 = !exp_b
+    and     t0, t0, t1                    # t0 = !exp_a && !exp_b
+
+    seqz    t1, s3                        # t1 = !exp_b
+    seqz    t2, s5                        # t2 = !mant_b
+    and     t1, t1, t2                    # t1 = !exp_b && !mant_b
+    or      t0, t0, t1                    # t0
+
+    bne     x0, t0, return_zero_bf16_mul  # if (t0) return zero
+
+    # exp_adjust
+    li      s7, 0                         # exp_adjust = 0
+
+    bnez    s2, 3f                        # if (exp_a) skip to 3
+1: # while loop
+    andi    t0, s4, 0x80
+    bnez    t0, 2f                        # while (!(mant_a & 0x80))
+
+    slli    s4, s4, 1                     # mant_a <<= 1
+    addi    s7, s7, -1                    # --exp_adjust
+
+    j       1b                            # repeat
+2: # end loop
+    li      s2, 1                         # exp_a = 1
+    j       4f
+3: # else case
+    ori     s4, s4, 0x80                  # mant_a |= 0x80
+
+4:
+    bnez    s3, 3f                        # if (exp_b) skip to 3
+1: # while loop
+    andi    t0, s5, 0x80
+    bnez    t0, 2f                        # while (!(mant_b & 0x80))
+
+    slli    s5, s5, 1                     # mant_b <<= 1
+    addi    s7, s7, -1                    # --exp_adjust
+
+    j       1b                            # repeat
+2: # end loop
+    li      s3, 1                         # exp_b = 1
+    j       4f
+3: # else case
+    ori     s5, s5, 0x80                  # mant_b |= 0x80
+
+4:
+    # result_mant
+    mv      a0, s4                        # a0 = mant_a
+    mv      a1, s5                        # a1 = mant_b
+    jal     ra, mul
+    mv      s8, a0                        # result_mant = mul(mant_a, mant_b)
+
+    # result_exp
+    add     s9, s2, s3                    # result_exp = exp_a + exp_b
+    add     s9, s9, s7                    # result_exp += exp_adjust
+    addi    s9, s9, -BF16_EXP_BIAS        # result_exp -= BF16_EXP_BIAS
+
+    li      t0, 0x8000
+    and     t0, s8, t0                    # t0 = result_mant & 0x8000
+    beqz    t0, 1f                        # if (!(result_mant & 0x8000)) go to else
+
+    srli    s8, s8, 8                     # result_mant >>= 8
+    andi    s8, s8, 0x7F                  # result_mant &= 0x7F
+    addi    s9, s9, 1                     # result_exp++
+    j       2f
+1: # else
+    srli    s8, s8, 7                     # result_mant >>= 7
+    andi    s8, s8, 0x7F                  # result_mant &= 0x7F
+
+2: # join
+    li      t0, 0xFF                      # t0 = 0xFF
+    bge     s9, t0, return_inf_bf16_mul   # if (result_exp >= 0xFF) return Inf
+
+    bgt     s9, x0, 1f                    # if (result_exp > 0) skip to 1
+    li      t0, -6
+    blt     s9, t0, return_zero_bf16_mul  # if (result_exp < -6) return zero
+    li      t0, 1                         # t0 = 1
+    sub     t0, t0, s9                    # t0 = 1 - result_exp
+    srl     s8, s8, t0                    # result_mant >>= (1 - result_exp)
+    li      s9, 0                         # result_exp = 0
+
+1:
+    # return value
+    slli    a0, s6, 15                    # a0 = result_sign << 15
+    andi    t0, s9, 0xFF                  # t0 = result_exp & 0xFF
+    slli    t0, t0, 7                     # t0 <<= 7
+    or      a0, a0, t0                    # a0 |= (result_exp & 0xFF) << 7
+    andi    t0, s8, 0x7F                  # t0 = result_mant & 0x7F
+    or      a0, a0, t0                    # a0 |= (result_mant & 0x7F)
+    j       on_return_bf16_mul            # on return
+
+return_a_bf16_mul:
+    j       on_return_bf16_mul
+
+return_b_bf16_mul:
+    mv      a0, a1
+    j       on_return_bf16_mul
+
+return_zero_bf16_mul:
+    slli    a0, s6, 15                    # a0 = result_sign << 15
+    j       on_return_bf16_mul
+
+return_nan_bf16_mul:
+    li      a0, BF16_NAN                  # return NaN
+    j       on_return_bf16_mul
+
+return_inf_bf16_mul:
+    slli    a0, s6, 15                    # a0 = result_sign << 15
+    li      t0, 0x7F80                    # t0 = 0x7F80
+    or      a0, a0, t0                    # a0 |= 0x7F80
+
+on_return_bf16_mul:
+    # Callee restore
+    lw      s9, 0(sp)
+    lw      s8, 4(sp)
+    lw      s7, 8(sp)
+    lw      s6, 12(sp)
+    lw      s5, 16(sp)
+    lw      s4, 20(sp)
+    lw      s3, 24(sp)
+    lw      s2, 28(sp)
+    lw      s1, 32(sp)
+    lw      s0, 36(sp)
+    lw      ra, 40(sp)
+    addi    sp, sp, 44
     ret
 
 
