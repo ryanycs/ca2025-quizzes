@@ -844,29 +844,29 @@ bf16_add:
     li      t0, 0xFF                      # t0 = 0xFF
     bne     s2, t0, 2f                    # if (exp_a != 0xFF) go to 2
 
-    bne     x0, s4, return_a_add_bf16     #   if (mant_a) return a
+    bne     x0, s4, return_a_bf16_add     #   if (mant_a) return a
 
     bne     s3, t0, 1f                    #   if (exp_b != 0xFF) go to 1
     sub     t0, s0, s1                    #     sign_a != sign_b
     not     t0, t0                        #     t0 = (sign_a == sign_b)
     or      t0, s5, t0                    #     t0 = (mant_b || sign_a == sign_b)
-    bne     x0, t0, return_b_add_bf16     #     if (mant_b || sign_a == sign_b) return b
+    bne     x0, t0, return_b_bf16_add     #     if (mant_b || sign_a == sign_b) return b
     li      a0, BF16_NAN                  #     else return BF16_NAN
-    j       on_return_add_bf16            # on return
+    j       on_return_bf16_add            # on return
 1:
-    j       return_a_add_bf16             #   return a
+    j       return_a_bf16_add             #   return a
 2: # End check exp of a
 
     # Check exp of b
     li      t0, 0xFF
-    beq     s3, t0, return_b_add_bf16     # if (exp_b == 0xFF) return b
+    beq     s3, t0, return_b_bf16_add     # if (exp_b == 0xFF) return b
 
     bne     x0, s2, 1f                    # if (exp_a != 0) go to 1
-    beq     x0, s4, return_b_add_bf16     # if (mant_a == 0) return b
+    beq     x0, s4, return_b_bf16_add     # if (mant_a == 0) return b
 1:
 
     bne     x0, s3, 1f                    # if (exp_b != 0) go to 1
-    beq     x0, s5, return_a_add_bf16     # if (mant_b == 0) return a
+    beq     x0, s5, return_a_bf16_add     # if (mant_b == 0) return a
 1:
 
     # Check exp of a to see if needed to add implicit leading 1
@@ -886,7 +886,7 @@ bf16_add:
     ble     s6, x0, 1f                    # if (exp_diff <= 0) go to 1
     mv      s8, s2                        #   result_exp = exp_a
     li      t0, 8                         #   t0 = 8
-    bgt     s6, t0, return_a_add_bf16     #   if (exp_diff > 8) return a
+    bgt     s6, t0, return_a_bf16_add     #   if (exp_diff > 8) return a
     srl     s5, s5, s6                    #   mant_b >>= exp_diff
     j       3f
 1:
@@ -894,7 +894,7 @@ bf16_add:
     bge     s6, x0, 2f                    # if (exp_diff >= 0) go to 2
     mv      s8, s3                        #   result_exp = exp_b
     li      t0, -8
-    blt     s6, t0, return_b_add_bf16     #   if (exp_diff < -8) return b
+    blt     s6, t0, return_b_bf16_add     #   if (exp_diff < -8) return b
     neg     t0, s6                        #   t0 = -exp_diff
     srl     s4, s4, t0                    #   mant_a >>= -exp_diff
     j       3f
@@ -919,7 +919,7 @@ bf16_add:
     slli    a0, s7, 15                    #   a0 = result_sign << 15
     li      t0, 0x7F80                    #   t0 = 0x7F80
     or      a0, a0, t0                    #   a0 |= 0x7F80 (return +Inf)
-    j       on_return_add_bf16            #   on return
+    j       on_return_bf16_add            #   on return
 1: # else
 # Check if (mant_a >= mant_b)
     blt     s4, s5, 1f                    # if (mant_a < mant_b) go to 1
@@ -932,14 +932,14 @@ bf16_add:
 2:
 
 # Check if (!result_mant)
-    beq     x0, s9, return_zero_add_bf16  # if (result_mant == 0) return bf16_zero
+    beq     x0, s9, return_zero_bf16_add  # if (result_mant == 0) return bf16_zero
 
 1: # while loop for normalize
     andi    t0, s9, 0x80                  # t0 = result_mant & 0x80
     bne     x0, t0, 3f                    # if (t0 != 0) go to 3
     slli    s9, s9, 1                     # result_mant <<= 1
     addi    s8, s8, -1                    # --result_exp
-    ble     s8, x0, return_zero_add_bf16  # if (result_exp <= 0) return bf16_zero
+    ble     s8, x0, return_zero_bf16_add  # if (result_exp <= 0) return bf16_zero
     j       1b
 3: # end while
 
@@ -950,17 +950,20 @@ bf16_add:
     or      a0, a0, t0                    # a0 |= (result_exp & 0xFF) << 7
     andi    t0, s9, 0x7F                  # t0 = result_mant & 0x7F
     or      a0, a0, t0                    # a0 |= (result_mant & 0x7F)
-    j       on_return_add_bf16            # on return
+    j       on_return_bf16_add            # on return
 
-return_a_add_bf16:
-    j       on_return_add_bf16
-return_b_add_bf16:
+return_a_bf16_add:
+    j       on_return_bf16_add
+
+return_b_bf16_add:
     mv      a0, a1
-    j       on_return_add_bf16
-return_zero_add_bf16:
+    j       on_return_bf16_add
+
+return_zero_bf16_add:
     li      a0, BF16_ZERO
-    j       on_return_add_bf16
-on_return_add_bf16:
+    j       on_return_bf16_add
+
+on_return_bf16_add:
     lw      s9, 0(sp)                     # restore s9
     lw      s8, 4(sp)                     # restore s8
     lw      s7, 8(sp)                     # restore s7
