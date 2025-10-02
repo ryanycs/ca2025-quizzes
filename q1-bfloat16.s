@@ -16,6 +16,7 @@
 .equ    NUM_TEST_VALUES_SUB,  3
 .equ    NUM_TEST_VALUES_MUL,  4
 .equ    NUM_TEST_VALUES_DIV,  7
+.equ    NUM_TEST_VALUES_SQRT, 3
 
 orig_f32:
 .word   0x00000000  #  0.0
@@ -116,10 +117,20 @@ bf16_div_output:
 .word  0x7f80               # +Inf
 .word  0x7f80               # +Inf
 
-conversion_passed_msg:     .string " Basic conversions: Pass\n"
-special_values_passed_msg: .string " Special values: PASS\n"
-arithmetic_passed_msg:     .string " Arithmetic (ADD/SUB/MUL/DIV): PASS\n"
-comparison_passed_msg:     .string " Comparisons: PASS\n"
+bf16_sqrt_input:
+.word  0x4080               # 4.0
+.word  0x4110               # 9.0
+.word  0x42a2               # 81.0
+
+bf16_sqrt_output:
+.word  0x4000               # 2.0
+.word  0x4040               # 3.0
+.word  0x4110               # 9.0
+
+conversion_passed_msg:     .string " Basic conversions: PASS\n"
+special_values_passed_msg: .string " Special values:    PASS\n"
+arithmetic_passed_msg:     .string " Arithmetic:        PASS\n"
+comparison_passed_msg:     .string " Comparisons:       PASS\n"
 
 result_msg: .string "   Result: "
 golden_msg: .string " Golden: "
@@ -340,6 +351,15 @@ test_arithmetic:
     la      a2, bf16_div_output
     li      a3, 2                         # two arguments
     li      a4, NUM_TEST_VALUES_DIV
+    jal     ra, textfixture
+    bne     x0, a0, 3f                    # if (ret != 0) go to fail
+
+    # Test bf16_sqrt
+    la      a0, bf16_sqrt
+    la      a1, bf16_sqrt_input
+    la      a2, bf16_sqrt_output
+    li      a3, 1                         # one argument
+    li      a4, NUM_TEST_VALUES_SQRT
     jal     ra, textfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
@@ -1417,7 +1437,169 @@ on_return_bf16_div:
     ret
 
 
+#-------------------------------------------------------------------------------
+# bf16_sqrt
+# Square root of a bfloat16 number
+#
+# Arguments:
+#   a0: a
+#
+# Returns:
+#   a0: sqrt(a)
+#
+# Register Usage:
+#   s0: sign
+#   s1: exp
+#   s2: mant
+#   s3: e (signed int)
+#   s4: new_exp (signed int)
+#   s5: m
+#   s6: low
+#   s7: high
+#   s8: result
+#   s9: mid
+#   s10: sq, new_mant
+#
+#-------------------------------------------------------------------------------
 bf16_sqrt:
+    # Callee save
+    addi    sp, sp, -48
+    sw      ra, 44(sp)
+    sw      s0, 40(sp)
+    sw      s1, 36(sp)
+    sw      s2, 32(sp)
+    sw      s3, 28(sp)
+    sw      s4, 24(sp)
+    sw      s5, 20(sp)
+    sw      s6, 16(sp)
+    sw      s7, 12(sp)
+    sw      s8, 8(sp)
+    sw      s9, 4(sp)
+    sw      s10, 0(sp)
+
+    # sign
+    srli    s0, a0, 15                    # sign = a >> 15
+    andi    s0, s0, 1                     # sign &= 1
+
+    # exp
+    srli    s1, a0, 7                     # exp = a >> 7
+    andi    s1, s1, 0xFF                  # exp
+
+    # mant
+    andi    s2, a0, 0x7F                  # mant = a & 0x7F
+
+    # Handle special cases
+    li      t0, 0xFF
+    bne     s1, t0, 1f                    # if (exp != 0xFF) skip to 1
+    bnez    s2, return_a_bf16_sqrt        # if (mant) return a (= NaN)
+    bnez    s0, return_nan_bf16_sqrt      # if (sign) return NaN
+    j       return_a_bf16_sqrt            # else return a (= Inf)
+1:
+
+    bnez    s1, 1f                        # if (exp) skip to 1
+    beqz    s2, return_zero_bf16_sqrt     # if (!exp && !mant) return 0
+1:
+    bnez    s0, return_nan_bf16_sqrt      # if (sign) return NaN
+
+    beqz    s1, return_zero_bf16_sqrt     # if (!exp) return 0
+
+    # e
+    addi    s3, s1, -BF16_EXP_BIAS        # e = exp - BF16_EXP_BIAS
+
+    # m
+    ori     s5, s2, 0x80                  # m = mant | 0x80
+
+    andi    t0, s3, 1                     # t0 = e & 1
+    beqz    t0, 1f                        # if (!(e & 1)) go to 1
+    slli    s5, s5, 1                     # m <<= 1
+    addi    s4, s3, -1                    # new_exp = e - 1
+    srai    s4, s4, 1                     # new_exp = (e - 1) >> 1
+    j       2f
+1: # else
+    srai    s4, s3, 1                     # new_exp = e >> 1
+2: # join
+    addi    s4, s4, BF16_EXP_BIAS         # new_exp += BF16_EXP_BIAS
+
+    li      s6, 90                        # low = 90
+    li      s7, 256                       # high = 256
+    li      s8, 128                       # result = 128
+
+1: # while (low <= high)
+    bgt     s6, s7, 3f                    # if (low > high) break
+
+    add     s9, s6, s7                    # mid = low + high
+    srli    s9, s9, 1                     # mid >>= 1
+    mv      a0, s9
+    mv      a1, s9
+    jal     ra, mul                       # mid * mid
+    mv      s10, a0                       # s10 = mid * mid
+    srli    s10, s10, 7                   # sq = (mid * mid) / 128
+
+    bgt     s10, s5, 2f                   # if (sq > m) go to 2
+    mv      s8, s9                        # result = mid
+    addi    s6, s9, 1                     # low = mid + 1
+    j       1b                            # repeat
+2: # else
+    addi    s7, s9, -1                    # high = mid - 1
+    j       1b                            # repeat
+3: # end while
+
+    li      t0, 256
+    blt     s8, t0, 1f                    # if (result < 256) go to 1
+    srli    s8, s8, 1                     # result >>= 1
+    addi    s4, s4, 1                     # new_exp++
+    j       3f
+1: # else if
+    li      t0, 128
+    bge     s8, t0, 3f                    # if (result >= 128) go to 3
+    li      t1, 1
+2: # loop
+    bge     s8, t0, 3f                    # while (result >= 128) break
+    ble     s4, t1, 3f                    # if (new_exp <= 1) break
+    slli    s8, s8, 1                     # result <<= 1
+    addi    s4, s4, -1                    # new_exp--
+    j       2b                            # repeat
+3: # join
+
+    andi    s10, s8, 0x7F                 # new_mant = result & 0x7F
+    li      t0, 0xFF
+    bge     s4, t0, return_inf_bf16_sqrt  # if (new_exp >= 0xFF) return +Inf
+    ble     s4, x0, return_zero_bf16_sqrt # if (new_exp <= 0) return 0
+
+    andi    a0, s4, 0xFF                  # a0 = new_exp & 0xFF
+    slli    a0, a0, 7                     # a0 <<= 7
+    or      a0, a0, s10                   # a0 |= new_mant
+    j       on_return_bf16_sqrt           # on return
+
+return_a_bf16_sqrt:
+    j       on_return_bf16_sqrt
+
+return_zero_bf16_sqrt:
+    li      a0, BF16_ZERO
+    j       on_return_bf16_sqrt
+
+return_nan_bf16_sqrt:
+    li      a0, BF16_NAN
+    j       on_return_bf16_sqrt
+
+return_inf_bf16_sqrt:
+    li      a0, BF16_POS_INF
+
+on_return_bf16_sqrt:
+    # Callee restore
+    lw      s10, 0(sp)
+    lw      s9, 4(sp)
+    lw      s8, 8(sp)
+    lw      s7, 12(sp)
+    lw      s6, 16(sp)
+    lw      s5, 20(sp)
+    lw      s4, 24(sp)
+    lw      s3, 28(sp)
+    lw      s2, 32(sp)
+    lw      s1, 36(sp)
+    lw      s0, 40(sp)
+    lw      ra, 44(sp)
+    addi    sp, sp, 48
     ret
 
 
