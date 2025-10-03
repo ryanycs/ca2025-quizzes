@@ -138,11 +138,20 @@ small_input:
 .word  0x006d               # 1e-38
 .word  0x5015               # 1e10
 
+rounding_input:
+.word  0x3fc00000           # 1.5
+.word  0x3f800347           # 1.0001
+
+rounding_output:
+.word  0x3fc0               # 1.5
+.word  0x3f80               # 1.0
+
 conversion_passed_msg:     .string " Basic conversions: PASS\n"
 special_values_passed_msg: .string " Special values:    PASS\n"
 arithmetic_passed_msg:     .string " Arithmetic:        PASS\n"
 comparison_passed_msg:     .string " Comparisons:       PASS\n"
 edge_cases_passed_msg:     .string " Edge cases:        PASS\n"
+rounding_passed_msg:       .string " Rounding:          PASS\n"
 
 result_msg: .string "   Result: "
 golden_msg: .string " Golden: "
@@ -154,23 +163,28 @@ endline:    .string "\n"
 # main
 #-------------------------------------------------------------------------------
 main:
-    # test_basic_conversions()
+    # Test basic conversions
     jal     ra, test_basic_conversions
     bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
-    # test_special_values()
+    # Test special values
     jal     ra, test_special_values
     bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
-    # test_arithmetic()
+    # Test arithmetic
     jal     ra, test_arithmetic
     bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
-    # test_comparisons()
+    # Test comparisons
     jal     ra, test_comparisons
     bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
+    # Test edge cases
     jal     ra, test_edge_cases
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
+
+    # Test rounding
+    jal     ra, test_rounding
     bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
     li      a7, 10                        # system call: exit
@@ -523,6 +537,44 @@ test_edge_cases:
     # Print passed message
     li      a7, 4
     la      a0, edge_cases_passed_msg
+    ecall
+
+    li      a0, 0
+    j       2f
+
+1: # fail
+    li      a0, 1
+
+2: # on return
+    lw      ra, 0(sp)
+    addi    sp, sp, 4
+    ret
+
+
+#-------------------------------------------------------------------------------
+# test_rounding
+#-------------------------------------------------------------------------------
+test_rounding:
+    addi    sp, sp, -4
+    sw      ra, 0(sp)
+
+    la      t0, rounding_input
+    lw      a0, 0(t0)
+    jal     ra, f32_to_bf16
+    la      t0, rounding_output
+    lw      t1, 0(t0)
+    bne     a0, t1, 1f
+
+    la      t0, rounding_input
+    lw      a0, 4(t0)
+    jal     ra, f32_to_bf16
+    la      t0, rounding_output
+    lw      t1, 4(t0)
+    bne     a0, t1, 1f
+
+    # Print passed message
+    li      a7, 4
+    la      a0, rounding_passed_msg
     ecall
 
     li      a0, 0
