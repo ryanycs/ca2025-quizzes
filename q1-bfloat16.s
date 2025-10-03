@@ -127,10 +127,22 @@ bf16_sqrt_output:
 .word  0x4040               # 3.0
 .word  0x4110               # 9.0
 
+tiny_input:
+.word  0x00000001           # 1e-45
+
+huge_input:
+.word  0x7E96               # 1e38
+.word  0x4120               # 10.0
+
+small_input:
+.word  0x006d               # 1e-38
+.word  0x5015               # 1e10
+
 conversion_passed_msg:     .string " Basic conversions: PASS\n"
 special_values_passed_msg: .string " Special values:    PASS\n"
 arithmetic_passed_msg:     .string " Arithmetic:        PASS\n"
 comparison_passed_msg:     .string " Comparisons:       PASS\n"
+edge_cases_passed_msg:     .string " Edge cases:        PASS\n"
 
 result_msg: .string "   Result: "
 golden_msg: .string " Golden: "
@@ -156,6 +168,9 @@ main:
 
     # test_comparisons()
     jal     ra, test_comparisons
+    bne     x0, a0, 1f                    # if (ret != 0) go to fail
+
+    jal     ra, test_edge_cases
     bne     x0, a0, 1f                    # if (ret != 0) go to fail
 
     li      a7, 10                        # system call: exit
@@ -472,6 +487,53 @@ test_comparisons:
     lw      s0, 8(sp)
     lw      ra, 12(sp)
     addi    sp, sp, 16
+    ret
+
+
+#-------------------------------------------------------------------------------
+# test_edge_cases
+#-------------------------------------------------------------------------------
+test_edge_cases:
+    addi    sp, sp, -4
+    sw      ra, 0(sp)
+
+    # Test tiny value
+    la      t0, tiny_input
+    lw      a0, 0(t0)
+    jal     ra, f32_to_bf16               # fp32_to_bf16()
+    jal     ra, bf16_iszero
+    beqz    a0, 1f                        # if (!iszero) go to fail
+
+    # Test huge multiplication
+    la      t0, huge_input
+    lw      a0, 0(t0)
+    lw      a1, 4(t0)
+    jal     ra, bf16_mul                  # bf16_mul()
+    jal     ra, bf16_isinf
+    beqz    a0, 1f                        # if (!isinf) go to fail
+
+    # Test small division
+    la      t0, small_input
+    lw      a0, 0(t0)
+    lw      a1, 4(t0)
+    jal     ra, bf16_div                  # bf16_div()
+    jal     ra, bf16_iszero
+    beqz    a0, 1f                        # if (!iszero) go to fail
+
+    # Print passed message
+    li      a7, 4
+    la      a0, edge_cases_passed_msg
+    ecall
+
+    li      a0, 0
+    j       2f
+
+1: # fail
+    li      a0, 1
+
+2: # on return
+    lw      ra, 0(sp)
+    addi    sp, sp, 4
     ret
 
 
