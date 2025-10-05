@@ -1,31 +1,56 @@
-    .data
-pass_message:
-    .string "All tests passed.\n"
-    .text
+.data
+
+pass_message: .string "All tests passed.\n"
+space:        .string " "
+endline:      .string "\n"
+
+.text
+
+#-------------------------------------------------------------------------------
+# main
+#-------------------------------------------------------------------------------
 main:
     jal     ra, test              # test()
     beq     x0, a0, exit          # if (!test())
+
+    # Print pass message
     li      a7, 4
     la      a0, pass_message
     ecall
+
+    # Halt
     li      a7, 10                # halt
     ecall
 exit:
+    # Exit with error code 1
     li      a7, 93                # system call: exit2
     li      a0, 1                 # exit value
     ecall                         # exit 1
 
+#-------------------------------------------------------------------------------
+# test
 # Test encode/decode round-trip
 #
-# s0: previous_value
-# s1: passed
-# s2: i
-# s3: fl
-# s4: value
-# s5: fl2
+# Returns:
+#   a0: 1 if all tests passed, 0 otherwise
+#
+# Registers Usage:
+#   s0: previous_value
+#   s1: passed
+#   s2: i
+#   s3: fl
+#   s4: value
+#   s5: fl2
+#-------------------------------------------------------------------------------
 test:
-    addi    sp, sp, -4
-    sw      ra 0(sp)              # store return addr
+    addi    sp, sp, -28
+    sw      ra, 24(sp)
+    sw      s0, 20(sp)
+    sw      s1, 16(sp)
+    sw      s2, 12(sp)
+    sw      s3, 8(sp)
+    sw      s4, 4(sp)
+    sw      s5, 0(sp)
 
     li      s0, -1                # previous_value = -1
     li      s1, 1                 # passed = true
@@ -40,6 +65,20 @@ test:
     jal     ra, uf8_encode        # uf8_encode(value)
     mv      s5, a0                # fl2 = uf8_decode(value)
 
+    # Print debug information
+    # li      a7, 1                 # print integer
+    # mv      a0, s3                # fl
+    # ecall
+    # li      a7, 4                 # print string
+    # la      a0, space             # " "
+    # ecall
+    # li      a7, 1                 # print integer
+    # mv      a0, s5                # fl2
+    # ecall
+    # li      a7, 4                 # print string
+    # la      a0, endline           # "\n"
+    # ecall
+
     beq     s3, s5, 2f            # if (fl == fl2), to 2
     li      s1, 0                 # passed = false
 2:
@@ -51,33 +90,58 @@ test:
     li      t0, 256
     blt     s2, t0, 1b            # if (i < 256), to 1
 # done
-
-    lw      ra 0(sp)              # restore return addr
-    addi    sp, sp, 4
-
     mv      a0, s1                # return passed
+
+    lw      s5, 0(sp)
+    lw      s4, 4(sp)
+    lw      s3, 8(sp)
+    lw      s2, 12(sp)
+    lw      s1, 16(sp)
+    lw      s0, 20(sp)
+    lw      ra, 24(sp)
+    addi    sp, sp, 28
+
     ret
 
+#-------------------------------------------------------------------------------
+# clz
+# Count leading zeros
+#
+# Arguments:
+#   a0: x
+#
+# Returns:
+#   a0: number of leading zeros
+#-------------------------------------------------------------------------------
 clz:
     li      t0, 32                # n
     li      t1, 16                # c
-1:
+1: # do while
     srl     t3, a0, t1            # y = x >> c
-    beq     x0, t3, 2f            # if (!y)
+    beq     x0, t3, 2f            # if (!y) go to 2
     sub     t0, t0, t1            # n = n - c
     mv      a0, t3                # x = y
-2:
+2: # join
     srai    t1, t1, 1             # c >>= 1
     bne     x0, t1, 1b            # while (c)
     sub     a0, t0, a0            # return value: n - x
     ret
 
+#-------------------------------------------------------------------------------
+# uf8_decode
 # Decode uf8 to uint32_t
 #
-# a0: fl
-# t0: mantissa
-# t1: exponent
-# t3: offset
+# Arguments:
+#   a0: fl
+#
+# Returns:
+#   a0: value
+#
+# Registers Usage:
+#   t0: mantissa
+#   t1: exponent
+#   t3: offset
+#-------------------------------------------------------------------------------
 uf8_decode:
     addi    sp, sp, -4
     sw      ra, 0(sp)             # store return addr
@@ -87,7 +151,7 @@ uf8_decode:
 
     li      t2, 15
     sub     t2, t2, t1            # 15 - exponent
-    li      t3, 0x00007fff
+    li      t3, 0x7fff
     srl     t3, t3, t2            # offset = 0x7fff >> (15 - exponent)
     slli    t3, t3, 4             # offset <<= 4
 
@@ -98,16 +162,26 @@ uf8_decode:
     addi    sp, sp, 4
     ret
 
+#-------------------------------------------------------------------------------
+# uf8_encode
 # Encode uint32_t to uf8
 #
-# s0: value
-# s1: lz
-# s2: msb
-# s3: exponent
-# s4: overflow
-# s5: e
-# s6: next_overflow
-# s7: mantissa
+# Arguments:
+#   a0: value
+#
+# Returns:
+#   a0: fl
+#
+# Registers Usage:
+#   s0: value
+#   s1: lz
+#   s2: msb
+#   s3: exponent
+#   s4: overflow
+#   s5: e
+#   s6: next_overflow
+#   s7: mantissa
+#-------------------------------------------------------------------------------
 uf8_encode:
     addi    sp, sp, -36
     sw      ra, 32(sp)            # store return addr
@@ -143,7 +217,6 @@ uf8_encode:
     li      t0, 15
     ble     s3, t0, 2f            # if (exponent <= 15) goto 2
     li      s3, 15                # exponent = 15
-# fi
 2:
 # for (e = 0; e < exponent; e++)
     li      s5, 0                 # e = 0
