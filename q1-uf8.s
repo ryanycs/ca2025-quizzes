@@ -122,7 +122,7 @@ uf8_encode:
 
     mv      s0, a0                # value
     li      t0, 16
-    blt     s0, t0, 4f            # if (value < 16) goto 4
+    blt     s0, t0, 8f            # if (value < 16) return value
 
     jal     ra, clz               # clz(value)
     mv      s1, a0                # lz = clz(value)
@@ -190,6 +190,7 @@ uf8_encode:
     slli    a0, s3, 4             # a0 = exponent << 4
     or      a0, a0, s7            # a0 |= mantissa
 
+8: # on return
     lw      s7, 0(sp)
     lw      s6, 4(sp)
     lw      s5, 8(sp)
