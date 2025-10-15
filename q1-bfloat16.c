@@ -311,10 +311,10 @@ static inline bf16_t bf16_sqrt(bf16_t a)
     /* For sqrt: new_exp = (old_exp - bias) / 2 + bias */
     int32_t e = exp - BF16_EXP_BIAS;
     int32_t new_exp;
-    
+
     /* Get full mantissa with implicit 1 */
     uint32_t m = 0x80 | mant;  /* Range [128, 256) representing [1.0, 2.0) */
-    
+
     /* Adjust for odd exponents: sqrt(2^odd * m) = 2^((odd-1)/2) * sqrt(2*m) */
     if (e & 1) {
         m <<= 1;  /* Double mantissa for odd exponent */
@@ -322,20 +322,20 @@ static inline bf16_t bf16_sqrt(bf16_t a)
     } else {
         new_exp = (e >> 1) + BF16_EXP_BIAS;
     }
-    
+
     /* Now m is in range [128, 256) or [256, 512) if exponent was odd */
     /* Binary search for integer square root */
     /* We want result where result^2 = m * 128 (since 128 represents 1.0) */
-    
+
     uint32_t low = 90;          /* Min sqrt (roughly sqrt(128)) */
     uint32_t high = 256;        /* Max sqrt (roughly sqrt(512)) */
     uint32_t result = 128;      /* Default */
-    
+
     /* Binary search for square root of m */
     while (low <= high) {
         uint32_t mid = (low + high) >> 1;
         uint32_t sq = (mid * mid) / 128;  /* Square and scale */
-        
+
         if (sq <= m) {
             result = mid;  /* This could be our answer */
             low = mid + 1;
@@ -343,11 +343,11 @@ static inline bf16_t bf16_sqrt(bf16_t a)
             high = mid - 1;
         }
     }
-    
+
     /* result now contains sqrt(m) * sqrt(128) / sqrt(128) = sqrt(m) */
     /* But we need to adjust the scale */
     /* Since m is scaled where 128=1.0, result should also be scaled same way */
-    
+
     /* Normalize to ensure result is in [128, 256) */
     if (result >= 256) {
         result >>= 1;
@@ -358,16 +358,16 @@ static inline bf16_t bf16_sqrt(bf16_t a)
             new_exp--;
         }
     }
-    
+
     /* Extract 7-bit mantissa (remove implicit 1) */
     uint16_t new_mant = result & 0x7F;
-    
+
     /* Check for overflow/underflow */
     if (new_exp >= 0xFF)
         return (bf16_t) {.bits = 0x7F80};  /* +Inf */
     if (new_exp <= 0)
         return BF16_ZERO();
-    
+
     return (bf16_t) {.bits = ((new_exp & 0xFF) << 7) | new_mant};
 }
 
