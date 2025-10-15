@@ -353,7 +353,7 @@ test_arithmetic:
     la      a2, bf16_add_output
     li      a3, 2                         # two arguments
     li      a4, NUM_TEST_VALUES_ADD
-    jal     ra, textfixture
+    jal     ra, testfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
     # Test bf16_sub
@@ -362,7 +362,7 @@ test_arithmetic:
     la      a2, bf16_sub_output
     li      a3, 2                         # two arguments
     li      a4, NUM_TEST_VALUES_SUB
-    jal     ra, textfixture
+    jal     ra, testfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
     # Test bf16_mul
@@ -371,7 +371,7 @@ test_arithmetic:
     la      a2, bf16_mul_output
     li      a3, 2                         # two arguments
     li      a4, NUM_TEST_VALUES_MUL
-    jal     ra, textfixture
+    jal     ra, testfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
     # Test bf16_div
@@ -380,7 +380,7 @@ test_arithmetic:
     la      a2, bf16_div_output
     li      a3, 2                         # two arguments
     li      a4, NUM_TEST_VALUES_DIV
-    jal     ra, textfixture
+    jal     ra, testfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
     # Test bf16_sqrt
@@ -389,7 +389,7 @@ test_arithmetic:
     la      a2, bf16_sqrt_output
     li      a3, 1                         # one argument
     li      a4, NUM_TEST_VALUES_SQRT
-    jal     ra, textfixture
+    jal     ra, testfixture
     bne     x0, a0, 3f                    # if (ret != 0) go to fail
 
     # All tests passed
@@ -590,7 +590,7 @@ test_rounding:
 
 
 #-------------------------------------------------------------------------------
-# textfixture
+# testfixture
 # Test the given function with the provided input and golden data
 #
 # Arguments:
@@ -614,7 +614,7 @@ test_rounding:
 #   s7: golden_data[i]
 #
 #-------------------------------------------------------------------------------
-textfixture:
+testfixture:
     # Callee save
     addi    sp, sp, -36
     sw      ra, 32(sp)
