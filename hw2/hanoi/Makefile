@@ -6,7 +6,7 @@ LINKER_SCRIPT = linker.ld
 EMU ?= ../../../build/rv32emu
 
 AFLAGS = -g $(ARCH)
-CFLAGS = -g -march=rv32i_zicsr
+CFLAGS = -g -march=rv32i_zicsr -Ofast
 LDFLAGS = -T $(LINKER_SCRIPT)
 EXEC = test.elf
 
@@ -15,7 +15,7 @@ AS = $(CROSS_COMPILE)as
 LD = $(CROSS_COMPILE)ld
 OBJDUMP = $(CROSS_COMPILE)objdump
 
-OBJS = start.o hanoi.o perfcounter.o
+OBJS = start.o perfcounter.o hanoi.o main.o
 
 .PHONY: all run dump clean
 

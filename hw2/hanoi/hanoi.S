@@ -1,6 +1,6 @@
     .text
-    .globl  main
-main:
+    .globl  hanoi
+hanoi:
     addi    sp, sp, -32
     sw      s0, 0(sp)
     sw      s1, 4(sp)
