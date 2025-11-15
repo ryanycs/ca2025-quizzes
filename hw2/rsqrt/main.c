@@ -3,27 +3,29 @@
 #include <limits.h>
 #include <unistd.h>
 
-#define printstr(ptr, length)                   \
-    do {                                        \
-        asm volatile(                           \
-            "add a7, x0, 0x40;"                 \
-            "add a0, x0, 0x1;" /* stdout */     \
-            "add a1, x0, %0;"                   \
-            "mv a2, %1;" /* length character */ \
-            "ecall;"                            \
-            :                                   \
-            : "r"(ptr), "r"(length)             \
-            : "a0", "a1", "a2", "a7");          \
-    } while (0)
-
-#define PRINT(str)                        \
-    {                                     \
-        char _str[] = str;                \
-        printstr(_str, sizeof(_str) - 1); \
+#define TEST_OUTPUT(msg, length) printstr(msg, length)
+#define TEST_LOGGER(msg)                     \
+    {                                        \
+        char _msg[] = msg;                   \
+        TEST_OUTPUT(_msg, sizeof(_msg) - 1); \
     }
 
 extern uint64_t get_cycles(void);
 extern uint64_t get_instret(void);
+extern void hanoi(void);
+
+static inline void printstr(char* ptr, int length) {
+    register const char *a1 asm("a1") = (ptr);
+    register long a2 asm("a2") = (length);
+    asm volatile(
+        "add a7, x0, 0x40;"
+        "add a0, x0, 0x1;" /* stdout */
+        "ecall;"
+        :
+        : "r"(a1), "r"(a2)
+        : "memory", "a0"
+    );
+}
 
 /* Software division for RV32I (no M extension) */
 static unsigned long udiv(unsigned long dividend, unsigned long divisor)
@@ -70,8 +72,6 @@ static void print_dec(unsigned long val)
 {
     char buf[20];
     char *p = buf + sizeof(buf) - 1;
-    // *p = '\n';
-    // p--;
 
     if (val == 0) {
         *p = '0';
@@ -101,6 +101,19 @@ static inline unsigned clz(uint32_t x)
     } while (c);
     return n - x;
 }
+
+// static inline unsigned clz2(uint32_t x)
+// {
+//     if (x == 0)
+//         return 32;
+//     uint32_t n = 0;
+//     if ((x >> 16) == 0) { n += 16; x <<= 16; }
+//     if ((x >> 24) == 0) { n += 8;  x <<= 8;  }
+//     if ((x >> 28) == 0) { n += 4;  x <<= 4;  }
+//     if ((x >> 30) == 0) { n += 2;  x <<= 2;  }
+//     if ((x >> 31) == 0) { n += 1; }
+//     return n;
+// }
 
 static uint64_t mul32(uint32_t a, uint32_t b)
 {
@@ -163,22 +176,22 @@ int main(void)
         uint32_t y = fast_rsqrt(test_vals[i]);
 
         // Print result
-        PRINT("rsqrt(");
+        TEST_LOGGER("rsqrt(");
         print_dec(test_vals[i]);
-        PRINT(") = ");
+        TEST_LOGGER(") = ");
         print_dec(y);
-        PRINT("\n");
+        TEST_LOGGER("\n");
 
         end_cycles = get_cycles();
         end_instret = get_instret();
         cycles_elapsed = end_cycles - start_cycles;
         instret_elapsed = end_instret - start_instret;
 
-        PRINT("  Cycles: ");
+        TEST_LOGGER("  Cycles: ");
         print_dec((unsigned long) cycles_elapsed);
-        PRINT("\n  Instructions: ");
+        TEST_LOGGER("\n  Instructions: ");
         print_dec((unsigned long) instret_elapsed);
-        PRINT("\n");
+        TEST_LOGGER("\n");
     }
 
     return 0;
